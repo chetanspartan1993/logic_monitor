@@ -9,9 +9,9 @@ import hmac
 import boto3
 from botocore.exceptions import ClientError
 
-def get_secret():
+def get_secret(secret_id):
 
-    secret_name = "newtest"
+    secret_name = secret_id
     region_name = "us-east-1"
 
     # Create a Secrets Manager client
@@ -24,13 +24,13 @@ def get_secret():
     #print(get_secret_value_response["SecretString"])
     return get_secret_value_response
 
-access_id = get_secret()
-
-print(access_id["SecretString"])
+access_id = get_secret("id")
+#print(access_id["SecretString"])
+access_key = get_secret("key")
 
 #Account Info
-AccessId = access_id
-AccessKey ='H_D9i(f5~B^U36^K6i42=^nS~e75gy382Bf6{)P+'
+AccessId = access_id["SecretString"]
+AccessKey = access_key["SecretString"]
 Company = 'api'
 
 #Request Info
