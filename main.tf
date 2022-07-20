@@ -8,15 +8,61 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
 }
 
-resource "aws_iam_role" "sm_role" {
-  name = "test_role"
+resource "aws_launch_template" "foobar" {
+  name_prefix   = var.name_prefix
+  image_id      = var.ami_id
+  instance_type = var.instance_type
+  user_data     = filebase64("${path.module}/script.sh")
+  vpc_security_group_ids = [aws_security_group.custom.id]
 
-  # Terraform's "jsonencode" function converts a
-  # Terraform expression result to valid JSON syntax.
-  assume_role_policy = jsonencode({
+  iam_instance_profile {
+    name = aws_iam_instance_profile.test_profile.name
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size = var.volume_size
+      encrypted = true
+      kms_key_id = module.kms_key.key_id
+    }
+  }
+}
+
+resource "aws_autoscaling_group" "bar" {
+  availability_zones = ["us-east-1a"]
+  desired_capacity   = var.desired_capacity
+  max_size           = var.max_size
+  min_size           = var.min_size
+
+  launch_template {
+    id      = aws_launch_template.foobar.id
+    version = "$Latest"
+  }
+
+  depends_on = [
+    aws_iam_instance_profile.test_profile,
+    aws_secretsmanager_secret_version.lm_id,
+    aws_secretsmanager_secret_version.lm_key,
+    aws_security_group.custom,
+    aws_security_group_rule.outbound
+  ]
+}
+
+module "iam_role" {
+  source  = "../iac-framework-modules-feature-tf13/iam/role"
+  
+  rolename = var.role_name
+
+  policyname = var.policy_name
+
+  policydescription = var.policy_description
+  
+  assumerolepolicy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -30,18 +76,6 @@ resource "aws_iam_role" "sm_role" {
     ]
   })
 
-  tags = {
-    tag-key = "tag-value"
-  }
-}
-
-resource "aws_iam_policy" "policy" {
-  name        = "test_policy"
-  path        = "/"
-  description = "My test policy"
-
-  # Terraform's "jsonencode" function converts a
-  # Terraform expression result to valid JSON syntax.
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -60,21 +94,29 @@ resource "aws_iam_policy" "policy" {
       },
     ]
   })
+
+
 }
 
-resource "aws_iam_policy_attachment" "test-attach" {
-  name       = "test-attachment"
-  roles      = [aws_iam_role.sm_role.name]
-  policy_arn = aws_iam_policy.policy.arn
+module "kms_key" {
+  source  = "../iac-framework-modules-feature-tf13/kms"
+
+  description = "CMK key for encryption"
+  key_deletion_window = var.key_deletion_window
+  key_alias = var.alias_name_key
 }
 
 resource "aws_iam_instance_profile" "test_profile" {
   name = "test_profile"
-  role = aws_iam_role.sm_role.name
+  role = var.role_name
+  depends_on = [
+    module.iam_role
+  ]
 }
 
 resource "aws_secretsmanager_secret" "lm_id" {
   name = "logic_monitor_access_id"
+  kms_key_id = module.kms_key.key_id
 }
 
 resource "aws_secretsmanager_secret_version" "lm_id" {
@@ -84,6 +126,7 @@ resource "aws_secretsmanager_secret_version" "lm_id" {
 
 resource "aws_secretsmanager_secret" "lm_key" {
   name = "logic_monitor_access_key"
+  kms_key_id = module.kms_key.key_id
 }
 
 resource "aws_secretsmanager_secret_version" "lm_key" {
@@ -91,17 +134,18 @@ resource "aws_secretsmanager_secret_version" "lm_key" {
   secret_string = "CHANGEME"
 }
 
+resource "aws_security_group" "custom" {
+  name        = var.security_group_name
+  description = "Security group for logic monitor collector instances"
+  vpc_id      = var.vpc_id
+}
 
-
-resource "aws_instance" "foo" {
-  ami                  = var.ami_id
-  instance_type        = var.instance_type
-  iam_instance_profile = aws_iam_instance_profile.test_profile.name
-  user_data            = <<EOF
-#! /bin/bash
-curl -o getURL.py https://tecores3bucket.s3.amazonaws.com/getURL.py
-python getURL.py
-chmod +x logicmonitorsetup123.bin
-./logicmonitorsetup123.bin
-EOF  
+resource "aws_security_group_rule" "outbound" {
+  type              = "egress"
+  description       = "Outbound"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.custom.id
 }
